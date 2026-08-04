@@ -1,0 +1,12 @@
+streamlit
+pandas
+numpy
+lightgbm
+scikit-learn
+openpyxl
+joblib
+# Optional - only needed if you want image-based features:
+# rembg
+# onnxruntime
+# transformers
+# torch
