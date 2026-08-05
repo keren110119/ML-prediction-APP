@@ -87,6 +87,9 @@ p, div, span, label, .stMarkdown { font-family: 'Inter', sans-serif; color: var(
     padding: 0.6rem 1.4rem;
 }
 .stButton > button:hover { background-color: var(--mw-gold); color: white; }
+.stButton > button p, .stButton > button div, .stButton > button span {
+    color: inherit !important;
+}
 
 /* Metric cards -> spec-tag style */
 [data-testid="stMetric"] {
@@ -131,16 +134,13 @@ if "authenticated" not in st.session_state:
 if not st.session_state.authenticated:
     st.markdown("""
     <style>
-    .mw-login-wrap {
-        display: flex; justify-content: center; margin-top: 8vh;
-    }
     .mw-login-card {
         background: white;
         border: 1px solid var(--mw-line);
         border-radius: 2px;
-        padding: 2.6rem 3rem;
-        width: 380px;
+        padding: 2.6rem 2.6rem 1.8rem 2.6rem;
         text-align: center;
+        margin-top: 8vh;
     }
     .mw-login-card h1 { font-size: 2.2rem !important; margin-bottom: 0.1rem !important; }
     .mw-login-tag {
@@ -149,17 +149,19 @@ if not st.session_state.authenticated:
         letter-spacing: 0.14em;
         font-size: 0.7rem;
         color: var(--mw-gold);
-        margin-bottom: 1.6rem;
+        margin-bottom: 0;
     }
     </style>
-    <div class="mw-login-wrap"><div class="mw-login-card">
-        <h1>Ming Wang</h1>
-        <div class="mw-login-tag">Sales Forecasting Studio</div>
-    </div></div>
     """, unsafe_allow_html=True)
 
     _, center_col, _ = st.columns([1, 1.15, 1])
     with center_col:
+        st.markdown("""
+        <div class="mw-login-card">
+            <h1>Ming Wang</h1>
+            <div class="mw-login-tag">Sales Forecasting Studio</div>
+        </div>
+        """, unsafe_allow_html=True)
         pw = st.text_input("Team password", type="password", label_visibility="collapsed",
                             placeholder="Enter team password")
         if st.button("Enter", use_container_width=True):
