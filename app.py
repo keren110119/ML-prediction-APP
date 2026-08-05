@@ -139,17 +139,30 @@ if not st.session_state.authenticated:
         border: 1px solid var(--mw-line);
         border-radius: 2px;
         padding: 2.6rem 2.6rem 1.8rem 2.6rem;
-        text-align: center;
         margin-top: 8vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        width: 100%;
+        box-sizing: border-box;
     }
-    .mw-login-card h1 { font-size: 2.2rem !important; margin-bottom: 0.1rem !important; }
+    .mw-login-card h1 {
+        font-size: 2.2rem !important;
+        margin: 0 0 0.1rem 0 !important;
+        text-align: center !important;
+        width: 100%;
+    }
     .mw-login-tag {
         font-family: 'Jost', sans-serif;
         text-transform: uppercase;
         letter-spacing: 0.14em;
         font-size: 0.7rem;
         color: var(--mw-gold);
-        margin-bottom: 0;
+        margin: 0;
+        text-align: center !important;
+        width: 100%;
     }
     </style>
     """, unsafe_allow_html=True)
