@@ -136,7 +136,7 @@ if not st.session_state.authenticated:
     <style>
     /* Narrow and center the whole page just for the login screen */
     section.main > div.block-container {
-        max-width: 460px !important;
+        max-width: 360px !important;
         margin: 0 auto !important;
         float: none !important;
     }
@@ -144,7 +144,7 @@ if not st.session_state.authenticated:
         background: white;
         border: 1px solid var(--mw-line);
         border-radius: 2px;
-        padding: 2.6rem 2.6rem 1.8rem 2.6rem;
+        padding: 2.2rem 2rem 1.4rem 2rem;
         margin-top: 8vh;
         display: flex;
         flex-direction: column;
@@ -156,17 +156,7 @@ if not st.session_state.authenticated:
     }
     .mw-login-card h1 {
         font-size: 2.2rem !important;
-        margin: 0 0 0.1rem 0 !important;
-        text-align: center !important;
-        width: 100%;
-    }
-    .mw-login-tag {
-        font-family: 'Jost', sans-serif;
-        text-transform: uppercase;
-        letter-spacing: 0.14em;
-        font-size: 0.7rem;
-        color: var(--mw-gold);
-        margin: 0;
+        margin: 0 !important;
         text-align: center !important;
         width: 100%;
     }
@@ -176,7 +166,6 @@ if not st.session_state.authenticated:
     st.markdown("""
     <div class="mw-login-card">
         <h1>Ming Wang</h1>
-        <div class="mw-login-tag">Sales Forecasting Studio</div>
     </div>
     """, unsafe_allow_html=True)
 
