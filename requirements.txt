@@ -5,8 +5,10 @@ lightgbm
 scikit-learn
 openpyxl
 joblib
+pywebview
 # Optional - only needed if you want image-based features:
 # rembg
 # onnxruntime
 # transformers
 # torch
+# pillow-heif   (only needed if you're uploading .heic/.heif photos, e.g. from an iPhone)
