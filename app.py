@@ -134,12 +134,6 @@ if "authenticated" not in st.session_state:
 if not st.session_state.authenticated:
     st.markdown("""
     <style>
-    /* Narrow and center the whole page just for the login screen */
-    section.main > div.block-container {
-        max-width: 360px !important;
-        margin: 0 auto !important;
-        float: none !important;
-    }
     .mw-login-card {
         background: white;
         border: 1px solid var(--mw-line);
@@ -163,20 +157,17 @@ if not st.session_state.authenticated:
     </style>
     """, unsafe_allow_html=True)
 
-    st.markdown("""
-    <div class="mw-login-card">
-        <h1>Ming Wang</h1>
-    </div>
-    """, unsafe_allow_html=True)
-
-    pw = st.text_input("Team password", type="password", label_visibility="collapsed",
-                        placeholder="Enter team password")
-    if st.button("Enter", use_container_width=True):
-        if pw == APP_PASSWORD:
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
+    left_pad, center_col, right_pad = st.columns([1, 0.9, 1])
+    with center_col:
+        st.markdown('<div class="mw-login-card"><h1>Ming Wang</h1></div>', unsafe_allow_html=True)
+        pw = st.text_input("Team password", type="password", label_visibility="collapsed",
+                            placeholder="Enter team password")
+        if st.button("Enter", use_container_width=True):
+            if pw == APP_PASSWORD:
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("Incorrect password.")
     st.stop()
 
 # Try to import optional image-embedding dependencies
