@@ -129,15 +129,45 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.markdown("<h1>Ming Wang</h1>", unsafe_allow_html=True)
-    st.caption("Sales Forecasting Studio")
-    pw = st.text_input("Enter the team password to continue", type="password")
-    if st.button("Enter"):
-        if pw == APP_PASSWORD:
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
+    st.markdown("""
+    <style>
+    .mw-login-wrap {
+        display: flex; justify-content: center; margin-top: 8vh;
+    }
+    .mw-login-card {
+        background: white;
+        border: 1px solid var(--mw-line);
+        border-radius: 2px;
+        padding: 2.6rem 3rem;
+        width: 380px;
+        text-align: center;
+    }
+    .mw-login-card h1 { font-size: 2.2rem !important; margin-bottom: 0.1rem !important; }
+    .mw-login-tag {
+        font-family: 'Jost', sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        font-size: 0.7rem;
+        color: var(--mw-gold);
+        margin-bottom: 1.6rem;
+    }
+    </style>
+    <div class="mw-login-wrap"><div class="mw-login-card">
+        <h1>Ming Wang</h1>
+        <div class="mw-login-tag">Sales Forecasting Studio</div>
+    </div></div>
+    """, unsafe_allow_html=True)
+
+    _, center_col, _ = st.columns([1, 1.15, 1])
+    with center_col:
+        pw = st.text_input("Team password", type="password", label_visibility="collapsed",
+                            placeholder="Enter team password")
+        if st.button("Enter", use_container_width=True):
+            if pw == APP_PASSWORD:
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("Incorrect password.")
     st.stop()
 
 # Try to import optional image-embedding dependencies
@@ -148,6 +178,11 @@ try:
     import torch
     from sklearn.decomposition import PCA
     from PIL import Image
+    try:
+        import pillow_heif
+        pillow_heif.register_heif_opener()  # lets PIL.Image.open read .heic/.heif files
+    except ImportError:
+        pass
 except ImportError:
     IMAGE_DEPS_AVAILABLE = False
 
@@ -181,15 +216,27 @@ def parse_sku(sku):
     return style, color_code
 
 
+def read_any_spreadsheet(file_obj, **kwargs):
+    """Reads CSV, TSV, XLS, or XLSX regardless of which one it actually is,
+    detecting the format from the filename extension."""
+    name = file_obj.name.lower()
+    if name.endswith((".xlsx", ".xls", ".xlsm")):
+        return pd.read_excel(file_obj, **{k: v for k, v in kwargs.items() if k != "low_memory"})
+    elif name.endswith(".tsv"):
+        return pd.read_csv(file_obj, sep="\t", **kwargs)
+    else:  # .csv and anything else - default to comma-separated
+        return pd.read_csv(file_obj, **kwargs)
+
+
 def clean_order_files(order_files, exclude_emails=None):
-    """Load and combine Shopify order export CSVs into clean line-item data."""
+    """Load and combine Shopify order exports (any spreadsheet format) into clean line-item data."""
     exclude_emails = exclude_emails or []
     cols_needed = ["Name", "Email", "Financial Status", "Created at", "Lineitem quantity",
                    "Lineitem price", "Lineitem compare at price", "Lineitem sku", "Cancelled at"]
 
     dfs = []
     for f in order_files:
-        d = pd.read_csv(f, low_memory=False)
+        d = read_any_spreadsheet(f, low_memory=False)
         available = [c for c in cols_needed if c in d.columns]
         dfs.append(d[available])
 
@@ -250,7 +297,7 @@ def add_lag_features(panel):
 
 
 def merge_netsuite_attrs(panel, netsuite_file):
-    ns = pd.read_excel(netsuite_file)
+    ns = read_any_spreadsheet(netsuite_file)
     attr_cols = [c for c in ["Color Family", "Fit", "Garment Length", "Sleeve Length", "Neckline",
                               "Closure Type", "Sleeve Type", "Silhouette (Dress/Skirt)",
                               "Material Type", "Category"] if c in ns.columns]
@@ -261,12 +308,19 @@ def merge_netsuite_attrs(panel, netsuite_file):
 def merge_inventory(panel, inventory_files):
     snapshots = []
     for f in inventory_files:
-        content = f.read().decode("utf-8", errors="ignore")
-        lines = content.split("\n")
-        date_line = lines[3].strip().strip('"')
-        snap_date = pd.to_datetime(date_line.replace("As of ", ""))
+        name = f.name.lower()
+        if name.endswith((".xlsx", ".xls")):
+            raw = pd.read_excel(f, header=None)
+            date_line = str(raw.iloc[3, 0]).strip().strip('"')
+            snap_date = pd.to_datetime(date_line.replace("As of ", ""))
+            d = pd.read_excel(f, skiprows=6)
+        else:
+            content = f.read().decode("utf-8", errors="ignore")
+            lines = content.split("\n")
+            date_line = lines[3].strip().strip('"')
+            snap_date = pd.to_datetime(date_line.replace("As of ", ""))
+            d = pd.read_csv(io.StringIO(content), skiprows=6)
 
-        d = pd.read_csv(io.StringIO(content), skiprows=6)
         d.columns = [c.strip() for c in d.columns]
         if "Item" not in d.columns or "On Hand" not in d.columns:
             continue
@@ -439,15 +493,20 @@ with tab1:
 
     col1, col2 = st.columns(2)
     with col1:
-        order_files = st.file_uploader("Shopify order exports (CSV, can select multiple)",
-                                        type="csv", accept_multiple_files=True, key="orders")
-        netsuite_file = st.file_uploader("NetSuite sales/attribute spreadsheet (XLSX)",
-                                          type="xlsx", key="netsuite")
+        order_files = st.file_uploader("Shopify order exports (CSV, TSV, XLS, or XLSX - can select multiple)",
+                                        type=["csv", "tsv", "xls", "xlsx"], accept_multiple_files=True, key="orders")
+        netsuite_file = st.file_uploader("NetSuite sales/attribute spreadsheet (CSV, XLS, or XLSX)",
+                                          type=["csv", "xls", "xlsx"], key="netsuite")
     with col2:
-        inventory_files = st.file_uploader("Monthly inventory snapshots (CSV, can select multiple)",
-                                            type="csv", accept_multiple_files=True, key="inventory")
-        image_files = st.file_uploader("Product photos (JPG/PNG, can select multiple)",
-                                        type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="images")
+        inventory_files = st.file_uploader("Monthly inventory snapshots (CSV, XLS, or XLSX - can select multiple)",
+                                            type=["csv", "xls", "xlsx"], accept_multiple_files=True, key="inventory")
+        image_features_file = st.file_uploader(
+            "Image features CSV (from the Colab pipeline - recommended instead of raw photos)",
+            type=["csv"], key="image_features_csv")
+        with st.expander("Or upload raw photos instead (slower, processed in-app)"):
+            image_files = st.file_uploader("Product photos (any common image format, can select multiple)",
+                                            type=["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp", "gif", "heic", "heif"],
+                                            accept_multiple_files=True, key="images")
 
     exclude_emails_raw = st.text_input(
         "Email addresses to exclude (comma-separated - e.g. internal/comp/PR orders)",
@@ -483,7 +542,19 @@ with tab1:
             panel["on_hand_qty"] = -1
             panel["likely_in_stock"] = False
 
-        if image_files and IMAGE_DEPS_AVAILABLE:
+        if image_features_file is not None:
+            with st.spinner("Merging pre-computed image features..."):
+                img_feats = pd.read_csv(image_features_file)
+                if "item_key" not in img_feats.columns:
+                    st.error("This CSV needs an 'item_key' column (style_colorcode) to merge - "
+                             "check that you ran the latest version of the Colab script.")
+                else:
+                    panel = panel.merge(img_feats, on="item_key", how="left")
+                    st.session_state.image_features = img_feats
+                    n_matched = panel["item_key"].isin(img_feats["item_key"]).sum()
+                    st.success(f"Merged image features for {img_feats['item_key'].nunique()} items "
+                               f"({n_matched:,} of {len(panel):,} rows matched)")
+        elif image_files and IMAGE_DEPS_AVAILABLE:
             with st.spinner("Extracting image features (this can take a while)..."):
                 img_feats = process_images(image_files)
                 if img_feats is not None:
