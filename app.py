@@ -200,6 +200,8 @@ if "metrics" not in st.session_state:
     st.session_state.metrics = None
 if "image_features" not in st.session_state:
     st.session_state.image_features = None
+if "category_maps" not in st.session_state:
+    st.session_state.category_maps = {}
 
 
 # =============================================================================
@@ -303,6 +305,83 @@ def merge_netsuite_attrs(panel, netsuite_file):
                               "Material Type", "Category"] if c in ns.columns]
     ns_attrs = ns.groupby("Style #")[attr_cols].first().reset_index().rename(columns={"Style #": "style"})
     return panel.merge(ns_attrs, on="style", how="left")
+
+
+# ---- Body (HTML) fallback attribute extraction (for styles missing from NetSuite) ----
+_SILHOUETTES = ["Sheath", "A-Line", "Shift", "Fit-and-Flare", "Fit and Flare",
+                "Straight", "Wide-Leg", "Wide Leg", "Bootcut", "Pencil", "Flare"]
+_NECKLINES = ["Scoop Neck", "V-Neck", "Crew Neck", "Boat Neck", "Square Neck",
+              "Mock Neck", "Cowl Neck", "Round Neck", "Notch Collar", "Shawl Collar"]
+_SLEEVES = ["Sleeveless", "Long Sleeve", "Short Sleeve", "3/4 Sleeve",
+            "Elbow Sleeve", "Cap Sleeve", "Bell Sleeve"]
+_CLOSURES = ["Pullover", "Pull-On", "Pull-on", "Zip Front", "Zip-Front",
+             "Button Front", "Button-Front", "Snap Front"]
+
+
+def _strip_html(raw_html):
+    if pd.isna(raw_html):
+        return ""
+    text = re.sub(r"<[^>]+>", " ", str(raw_html))
+    return text
+
+
+def _find_any(text, options):
+    found = [opt for opt in options if opt.lower() in text.lower()]
+    return found[0] if found else None
+
+
+def _extract_fabric_composition(text):
+    matches = re.findall(r"(\d{1,3}%\s*[A-Za-z]+)", text)
+    return "; ".join(matches) if matches else None
+
+
+def merge_body_html_attrs(panel, products_file):
+    """Fills in attributes for styles NetSuite doesn't cover, parsed from the
+    Body (HTML) product description. Only fills gaps - never overwrites a
+    value NetSuite already provided."""
+    products = read_any_spreadsheet(products_file, low_memory=False)
+    if "Body (HTML)" not in products.columns or "Handle" not in products.columns:
+        st.warning("This file doesn't look like a Shopify product export "
+                   "(missing 'Body (HTML)' or 'Handle' columns) - skipping.")
+        return panel
+
+    products["Body (HTML)"] = products.groupby("Handle")["Body (HTML)"].ffill()
+    prod_first = products.dropna(subset=["Variant SKU"]).groupby("Handle").first().reset_index()
+    prod_first["style"] = prod_first["Variant SKU"].astype(str).str.split("-").str[0]
+    prod_first["clean_text"] = prod_first["Body (HTML)"].apply(_strip_html)
+
+    prod_first["neckline_desc"] = prod_first["clean_text"].apply(lambda t: _find_any(t, _NECKLINES))
+    prod_first["sleeve_desc"] = prod_first["clean_text"].apply(lambda t: _find_any(t, _SLEEVES))
+    prod_first["silhouette_desc"] = prod_first["clean_text"].apply(lambda t: _find_any(t, _SILHOUETTES))
+    prod_first["closure_desc"] = prod_first["clean_text"].apply(lambda t: _find_any(t, _CLOSURES))
+    prod_first["fabric_desc"] = prod_first["clean_text"].apply(_extract_fabric_composition)
+
+    html_attrs = prod_first.groupby("style")[
+        ["neckline_desc", "sleeve_desc", "silhouette_desc", "closure_desc", "fabric_desc"]
+    ].first().reset_index()
+
+    panel = panel.merge(html_attrs, on="style", how="left")
+
+    # Fill gaps only - a style with real NetSuite data keeps that data untouched
+    fallback_map = {
+        "Neckline": "neckline_desc",
+        "Sleeve Type": "sleeve_desc",
+        "Silhouette (Dress/Skirt)": "silhouette_desc",
+        "Closure Type": "closure_desc",
+        "Material Type": "fabric_desc",
+    }
+    n_filled = 0
+    for target_col, fallback_col in fallback_map.items():
+        if target_col in panel.columns:
+            before = panel[target_col].isna().sum()
+            panel[target_col] = panel[target_col].fillna(panel[fallback_col])
+            n_filled += before - panel[target_col].isna().sum()
+        else:
+            panel[target_col] = panel[fallback_col]
+
+    panel = panel.drop(columns=list(fallback_map.values()))
+    st.session_state["_html_fallback_fill_count"] = n_filled
+    return panel
 
 
 def merge_inventory(panel, inventory_files):
@@ -444,8 +523,11 @@ def train_model(df, test_weeks=8):
                                       "Material Type"] if c in df.columns]
 
     model_df = df[numeric_feats + categorical_feats + ["qty_sold", "week"]].copy()
+    category_maps = {}  # remembers the exact category list per column, so any later
+                         # prediction (including a brand-new item) encodes consistently
     for c in categorical_feats:
         model_df[c] = model_df[c].astype("category")
+        category_maps[c] = model_df[c].cat.categories.tolist()
 
     cutoff = model_df["week"].max() - pd.Timedelta(weeks=test_weeks)
     train = model_df[model_df["week"] <= cutoff]
@@ -474,7 +556,7 @@ def train_model(df, test_weeks=8):
                "n_train": len(train), "n_test": len(test),
                "train_end": train["week"].max(), "test_start": test["week"].min()}
 
-    return model, importance, metrics, numeric_feats, categorical_feats
+    return model, importance, metrics, numeric_feats, categorical_feats, category_maps
 
 
 # =============================================================================
@@ -497,6 +579,9 @@ with tab1:
                                         type=["csv", "tsv", "xls", "xlsx"], accept_multiple_files=True, key="orders")
         netsuite_file = st.file_uploader("NetSuite sales/attribute spreadsheet (CSV, XLS, or XLSX)",
                                           type=["csv", "xls", "xlsx"], key="netsuite")
+        products_file = st.file_uploader(
+            "Product catalog export (products_export.csv - fills attributes for styles NetSuite doesn't cover)",
+            type=["csv", "xls", "xlsx"], key="products")
     with col2:
         inventory_files = st.file_uploader("Monthly inventory snapshots (CSV, XLS, or XLSX - can select multiple)",
                                             type=["csv", "xls", "xlsx"], accept_multiple_files=True, key="inventory")
@@ -534,6 +619,13 @@ with tab1:
 
         with st.spinner("Merging NetSuite attributes..."):
             panel = merge_netsuite_attrs(panel, netsuite_file)
+
+        if products_file is not None:
+            with st.spinner("Filling gaps from product catalog descriptions..."):
+                panel = merge_body_html_attrs(panel, products_file)
+                n_filled = st.session_state.get("_html_fallback_fill_count", 0)
+                st.success(f"Filled {n_filled:,} missing attribute values using product descriptions "
+                           f"(for styles NetSuite didn't cover)")
 
         if inventory_files:
             with st.spinner("Merging inventory snapshots..."):
@@ -582,13 +674,14 @@ with tab2:
 
         if st.button("Train Model", type="primary"):
             with st.spinner("Training LightGBM model..."):
-                model, importance, metrics, num_feats, cat_feats = train_model(
+                model, importance, metrics, num_feats, cat_feats, category_maps = train_model(
                     st.session_state.modeling_table, test_weeks)
                 st.session_state.model = model
                 st.session_state.feature_importance = importance
                 st.session_state.metrics = metrics
                 st.session_state.num_feats = num_feats
                 st.session_state.cat_feats = cat_feats
+                st.session_state.category_maps = category_maps
 
         if st.session_state.metrics:
             m = st.session_state.metrics
@@ -626,7 +719,8 @@ with tab3:
             feat_cols = st.session_state.num_feats + st.session_state.cat_feats
             X_pred = item_rows[feat_cols].iloc[[-1]].copy()
             for c in st.session_state.cat_feats:
-                X_pred[c] = X_pred[c].astype("category")
+                cats = st.session_state.category_maps.get(c)
+                X_pred[c] = pd.Categorical(X_pred[c], categories=cats)
 
             pred = max(0, st.session_state.model.predict(X_pred)[0])
 
@@ -642,3 +736,85 @@ with tab3:
                     st.write(f"**Fit:** {latest.get('Fit', 'N/A')}")
             with col2:
                 st.line_chart(item_rows.set_index("week")["qty_sold"])
+
+        st.divider()
+        st.markdown("### Predict A Brand-New Item From A Photo")
+        st.caption(
+            "For an item that hasn't sold yet, so there's no sales history to look up. "
+            "The prediction here leans much more heavily on price, attributes, and the photo itself, "
+            "since there's no lag-sales signal to draw on."
+        )
+
+        if not IMAGE_DEPS_AVAILABLE:
+            st.warning(
+                "This needs the optional image libraries (`rembg`, `transformers`, `torch`) installed "
+                "and running wherever this app is hosted. These are heavy packages that may not run "
+                "on Streamlit Community Cloud's free tier - this feature is intended for running the "
+                "app locally on your own machine."
+            )
+        else:
+            new_photo = st.file_uploader("Photo of the new item", type=["jpg", "jpeg", "png", "webp"],
+                                          key="new_item_photo")
+            pca_model_file = st.file_uploader("PCA model file (pca_model.pkl, from the Colab pipeline)",
+                                               type=["pkl"], key="new_item_pca")
+
+            manual_inputs = {}
+            col_a, col_b = st.columns(2)
+            with col_a:
+                manual_inputs["avg_price"] = st.number_input("Price ($)", min_value=0.0, value=100.0, step=5.0)
+                manual_inputs["discount_pct"] = st.number_input("Discount (%)", min_value=0.0, max_value=100.0, value=0.0)
+            with col_b:
+                for c in st.session_state.cat_feats:
+                    if c in ("style", "color_code"):
+                        continue
+                    options = st.session_state.category_maps.get(c, [])
+                    if options:
+                        manual_inputs[c] = st.selectbox(c, options, key=f"new_item_{c}")
+
+            if st.button("Predict Sales For This New Item", type="primary"):
+                if new_photo is None or pca_model_file is None:
+                    st.error("Please upload both the photo and the pca_model.pkl file.")
+                else:
+                    with st.spinner("Analyzing photo..."):
+                        model_clip, processor_clip = load_fashion_clip()
+                        img_bytes = remove(new_photo.read())
+                        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                        raw_embedding = get_embedding(img, model_clip, processor_clip).reshape(1, -1)
+
+                        pca = joblib.load(pca_model_file)
+                        img_pca_values = pca.transform(raw_embedding)[0]
+
+                        row = {}
+                        for feat in st.session_state.num_feats:
+                            if feat.startswith("img_pca_"):
+                                idx = int(feat.split("_")[-1]) - 1
+                                row[feat] = img_pca_values[idx] if idx < len(img_pca_values) else 0.0
+                            elif feat in manual_inputs:
+                                row[feat] = manual_inputs[feat]
+                            elif feat in ("week_of_year", "month"):
+                                row[feat] = datetime.now().isocalendar()[1] if feat == "week_of_year" else datetime.now().month
+                            elif feat == "on_hand_qty":
+                                row[feat] = -1  # unknown/not-yet-stocked - same sentinel used for
+                                                 # historical items with no matching inventory snapshot,
+                                                 # NOT 0 (which would falsely mean "confirmed out of stock")
+                            else:
+                                row[feat] = 0  # lag/rolling sales features - genuinely zero, no history exists yet
+
+                        for feat in st.session_state.cat_feats:
+                            if feat in ("style", "color_code"):
+                                row[feat] = None  # genuinely new - no existing code to match
+                            else:
+                                row[feat] = manual_inputs.get(feat)
+
+                        X_new = pd.DataFrame([row])
+                        for c in st.session_state.cat_feats:
+                            cats = st.session_state.category_maps.get(c)
+                            X_new[c] = pd.Categorical(X_new[c], categories=cats)
+
+                        new_pred = max(0, st.session_state.model.predict(X_new)[0])
+
+                    st.metric("Predicted units, first week", f"{new_pred:.1f}")
+                    st.caption(
+                        "Treat this as a rough starting estimate - with no sales history, "
+                        "the model is relying mainly on price, the attributes you selected, and the photo."
+                    )
